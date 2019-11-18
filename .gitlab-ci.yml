@@ -1,0 +1,455 @@
+stages: 
+  - terraform-validation
+  - terraform-graph
+  - terraform-deploy
+  - terraform-delete
+##----------------------Validacion Infraestructura---------------------------##
+validation-terra-dev:
+  tags: 
+  - GCP-02
+  stage: terraform-validation
+  image: gcr.io/project_/terraform:0.12.2
+  variables:
+    AMBIENTE: "develop"
+  script:
+    - get-credentials-gcp
+    - terraform --version
+    - validation-terraform
+    - ls -la ./credentials
+    - plan-terraform
+
+# validation-terra-qa:
+#   tags: 
+#   -  GCP-01
+#   stage: terraform-validation
+#   image: gcr.io/project_/terraform:0.12.2
+#   variables:
+#     AMBIENTE: "release"
+#   script:
+#     - get-credentials-gcp
+#     - terraform --version
+#     - validation-terraform
+#     - ls -la ./credentials
+#     - plan-terraform
+
+# validation-terra-prod:
+#   tags: 
+#   - GCP_RUNNER_TERRAFORM_PROD
+#   stage: terraform-validation
+#   image: gcr.io/project_/terraform:0.12.2
+#   variables:
+#     AMBIENTE: "master"
+#   script:
+#     - get-credentials-gcp
+#     - terraform --version
+#     - validation-terraform
+#     - ls -la ./credentials
+#     - plan-terraform
+##----------------------Visualizacion Infraestructura---------------------------##
+graph-terra:
+  tags: 
+  - GCP-02
+  stage: terraform-graph
+  image: gcr.io/project_/terraform:0.12.2
+  variables:
+    AMBIENTE: "develop"
+  artifacts:
+    paths:
+      - graph-$CI_PIPELINE_IID.svg
+    expire_in: 120 mins
+    when: on_success
+  script:
+    - get-credentials-gcp
+    - apt install python-pydot python-pydot-ng graphviz -y
+    - graph-terraform
+##----------------------Despliegue Ambiente---------------------------##
+# Terraform-deploy-prod:
+#   tags: 
+#   - GCP_RUNNER_TERRAFORM_PROD
+#   stage: terraform-deploy
+#   image: gcr.io/project_/terraform:0.12.2
+#   variables:
+#     AMBIENTE: "master"
+#   artifacts:
+#     paths:
+#       - terraform.tfstate
+#       - ./credentials/
+#     expire_in: 120 mins
+#   script:
+#     - get-credentials-gcp
+#     - ls -la ./credentials
+#     - gcp_download_terraform_files_state
+#     - execution_terraform_files
+#     - gcp_update_terraform_files_state
+#     - save-certifications
+#   when: manual
+
+Terraform-deploy-desa:
+  tags: 
+  - GCP-02
+  stage: terraform-deploy
+  image: gcr.io/project_/terraform:0.12.2
+  variables:
+    AMBIENTE: "develop"
+  artifacts:
+    paths:
+      - terraform.tfstate
+      - ./credentials/
+    expire_in: 120 mins 
+  script:
+    - get-credentials-gcp
+    - ls -la ./credentials
+#    - gcp_download_terraform_files_state
+    - execution_terraform_files
+#    - gcp_update_terraform_files_state
+#    - save-certifications
+#    - ls -la ./credentials/
+  when: manual
+  allow_failure: true
+
+# Terraform-deploy-qa:
+#   tags: 
+#   -  GCP-01
+#   stage: terraform-deploy
+#   image: gcr.io/project_/terraform:0.12.2
+#   variables:
+#     AMBIENTE: "release"
+#   artifacts:
+#     paths:
+#       - terraform.tfstate
+#       - ./credentials/
+#     expire_in: 120 mins
+#   script:
+#     - get-credentials-gcp  
+#     - ls -la ./credentials  
+#     - gcp_download_terraform_files_state
+#     - execution_terraform_files
+#     - gcp_update_terraform_files_state
+#     - save-certifications
+#   when: manual
+##----------------------Eliminacion Ambiente---------------------------##
+# Terraform-delete-prod:
+#   tags: 
+#   - GCP_RUNNER_TERRAFORM_PROD
+#   stage: terraform-delete
+#   image: gcr.io/project_/terraform:0.12.2
+#   variables:
+#     AMBIENTE: "master"
+#   artifacts:
+#     paths:
+#       - terraform.tfstate
+#       - ./credentials/
+#     expire_in: 120 mins
+#   script:
+#     - get-credentials-gcp
+#     - ls -la ./credentials
+#     - gcp_download_terraform_files_state
+#     - delete_terraform_infra
+#     - gcp_update_terraform_files_state
+#   when: manual
+
+Terraform-delete-desa:
+  tags: 
+  - GCP-02
+  stage: terraform-delete
+  image: gcr.io/project_/terraform:0.12.2
+  variables:
+    AMBIENTE: "develop"
+  artifacts:
+    paths:
+      - terraform.tfstate
+      - ./credentials/
+    expire_in: 120 mins 
+  script:
+    - get-credentials-gcp
+    - ls -la ./credentials
+#    - gcp_download_terraform_files_state
+    - delete_terraform_infra
+#    - gcp_update_terraform_files_state
+  when: manual
+
+# Terraform-delete-qa:
+#   tags: 
+#   -  GCP-01
+#   stage: terraform-delete
+#   image: gcr.io/project_/terraform:0.12.2
+#   variables:
+#     AMBIENTE: "release"
+#   artifacts:
+#     paths:
+#       - terraform.tfstate
+#       - ./credentials/
+#     expire_in: 120 mins
+#   script:
+#     - get-credentials-gcp  
+#     - ls -la ./credentials  
+#     - gcp_download_terraform_files_state
+#     - delete_terraform_infra
+#     - gcp_update_terraform_files_state
+#   when: manual
+    
+# Declarative methods sections
+
+.script_exec: &script_exec |
+  # Auto DevOps variables and functions
+  [[ "$TRACE" ]] && set -x
+
+  # Validacion de Estado Infraestructura 
+  function gcp_download_terraform_files_state() {
+    if [ $AMBIENTE == 'master' ]; then
+        echo "INFO: Proceso de Creacion Infraestructura Ambiente PRODUCCION ..."
+        if [ $PROD_TERRAFORM_STATUS_INFRAESTRUCTURA == '1' ]; then
+            echo "INFO: Ejecutando Modificaciones de Infraestructura ..."
+            echo "INFO: Descargando archivo Terrafrom state ..."
+            gcloud auth activate-service-account ${TERRAFORM_BUCKET_ACCOUNT} --key-file=./credentials/auth_bucket_ci.json --project=${TERRAFORM_GCP_BUCKET_PROJECT_ID}
+            gsutil cp gs://${TERRAFORM_BUCKET_PATH_PROD}/terraform.tfstate  ./terraform.tfstate
+            ls -la 
+        fi 
+        if [ $PROD_TERRAFORM_STATUS_INFRAESTRUCTURA == '0' ]; then
+            echo "INFO: Ejecutando Creacion de Infraestructura ..."
+        fi 
+    fi
+    if [ $AMBIENTE == 'release' ]; then
+        echo "INFO: Proceso de Creacion Infraestructura Ambiente QA ..."
+        if [ $QA_TERRAFORM_STATUS_INFRAESTRUCTURA == '1' ]; then
+            echo "INFO: Ejecutando Modificaciones de Infraestructura ..."
+            echo "INFO: Descargando archivo Terrafrom state ..."
+            gcloud auth activate-service-account ${TERRAFORM_BUCKET_ACCOUNT} --key-file=./credentials/auth_bucket_ci.json --project=${TERRAFORM_GCP_BUCKET_PROJECT_ID}
+            gsutil cp gs://${TERRAFORM_BUCKET_PATH_QA}/terraform.tfstate  ./terraform.tfstate
+            ls -la 
+        fi 
+        if [ $QA_TERRAFORM_STATUS_INFRAESTRUCTURA == '0' ]; then
+            echo "INFO: Ejecutando Creacion de Infraestructura ..."
+        fi 
+    fi
+    if [ $AMBIENTE == 'develop' ]; then
+        echo "INFO: Proceso de Creacion Infraestructura Ambiente DESARROLLO ..."
+        if [ $DEV_TERRAFORM_STATUS_INFRAESTRUCTURA == '1' ]; then
+            echo "INFO: Ejecutando Modificaciones de Infraestructura ..."
+            echo "INFO: Descargando archivo Terrafrom state ..."
+            gcloud auth activate-service-account ${TERRAFORM_BUCKET_ACCOUNT} --key-file=./credentials/auth_bucket_ci.json --project=${TERRAFORM_GCP_BUCKET_PROJECT_ID}
+            gsutil cp gs://${TERRAFORM_BUCKET_PATH_DEV}/terraform.tfstate ./terraform.tfstate
+            ls -la 
+        fi 
+        if [ $DEV_TERRAFORM_STATUS_INFRAESTRUCTURA == '0' ]; then
+            echo "INFO: Ejecutando Creacion de Infraestructura ..."
+        fi 
+    fi
+  }
+
+  # Creacion  de Infraestructura 
+  function execution_terraform_files() {
+    if [ $AMBIENTE == 'master' ]; then
+        echo "INFO: Ejecutando Creacion de Infraestructura ..."
+        export TF_VAR_project_id=${PROD_GCP_PROJECT_ID}
+        export TF_VAR_bucket_terraform=${TERRAFORM_BUCKET_PATH_PROD} 
+        export TF_VAR_credentials_file=./credentials/auth_proyect_gcp.json
+        echo "INFO: PROYECTO ${PROJECT_ID}"
+        terraform -v
+        terraform init
+        terraform apply -auto-approve 
+    fi
+    if [ $AMBIENTE == 'release' ]; then
+        echo "INFO: Ejecutando Creacion de Infraestructura ..."
+        export TF_VAR_project_id=${QA_GCP_PROJECT_ID}
+        export TF_VAR_bucket_terraform=${TERRAFORM_BUCKET_PATH_QA}
+        export TF_VAR_credentials_file=./credentials/auth_proyect_gcp.json
+        echo "INFO: PROYECTO ${PROJECT_ID}"
+        terraform -v
+        terraform init
+        terraform apply -auto-approve 
+    fi
+    if [ $AMBIENTE == 'develop' ]; then
+        echo "INFO: Ejecutando Creacion de Infraestructura ..."
+        export TF_VAR_project_id=${DEV_GCP_PROJECT_ID}
+        export TF_VAR_bucket_terraform=${TERRAFORM_BUCKET_PATH_DEV}
+        export TF_VAR_credentials_file=./credentials/proyecto-capasitacion-6a9ec613bb66.json
+        echo "INFO: PROYECTO ${PROJECT_ID}"
+        terraform -v
+        terraform init 
+        terraform apply -auto-approve 
+    fi
+  }
+
+  # Eliminacion de Infraestructura 
+  function delete_terraform_infra() {
+    if [ $AMBIENTE == 'master' ]; then
+        echo "INFO: Proceso de Eliminacion Infraestructura PRODUCCION ..."         
+        echo "INFO: Eliminacion de Infraestructura ..."
+        export TF_VAR_project_id=${PROD_GCP_PROJECT_ID}
+        export TF_VAR_bucket_terraform=${TERRAFORM_BUCKET_PATH_PROD}        
+        export TF_VAR_credentials_file=./credentials/auth_proyect_gcp.json
+        echo "INFO: PROYECTO ${PROJECT_ID}"
+        terraform -v
+        terraform init
+        terraform destroy -auto-approve
+    fi
+    if [ $AMBIENTE == 'release' ]; then
+        echo "INFO: Proceso de Eliminacion Infraestructura QA ..."
+        echo "INFO: Eliminacion de Infraestructura ..."
+        export TF_VAR_project_id=${QA_GCP_PROJECT_ID}
+        export TF_VAR_bucket_terraform=${TERRAFORM_BUCKET_PATH_QA}
+        export TF_VAR_credentials_file=./credentials/auth_proyect_gcp.json
+        echo "INFO: PROYECTO ${PROJECT_ID}"
+        terraform -v
+        terraform init
+        terraform destroy -auto-approve
+    fi
+    if [ $AMBIENTE == 'develop' ]; then
+        echo "INFO: Proceso de Eliminacion Infraestructura DESARROLLO ..."        
+        echo "INFO: Eliminacion de Infraestructura ..."
+        export TF_VAR_project_id=${DEV_GCP_PROJECT_ID}
+        export TF_VAR_bucket_terraform=${TERRAFORM_BUCKET_PATH_DEV}
+        export TF_VAR_credentials_file=./credentials/proyecto-capasitacion-6a9ec613bb66.json
+        echo "INFO: PROYECTO ${PROJECT_ID}"
+        terraform -v
+        terraform init
+        terraform destroy -auto-approve 
+    fi
+  }
+  # Respaldo archivo de la ejecucion de la infraestructura en bucket 
+  function gcp_update_terraform_files_state() {
+    if [ $AMBIENTE == 'master' ]; then
+        if [ $PROD_TERRAFORM_STATUS_INFRAESTRUCTURA == '1' ]; then
+            echo "INFO: Proceso de Eliminacion Infraestructura PRODUCCION ..."
+            echo "INFO: Eliminacion de Infraestructura ..."
+        fi 
+        if [ $PROD_TERRAFORM_STATUS_INFRAESTRUCTURA == '0' ]; then
+            echo "INFO: Respaldando archivos terraform.tfstate y terraform.tfstate.backup en Bucket Terraform-produccion "
+            echo "INFO: ************************************ " 
+            echo "INFO: ${TERRAFORM_BUCKET_PATH_PROD}"  
+            echo "INFO: ${TERRAFORM_BUCKET_PATH_PROD}"     
+            gcloud auth activate-service-account ${TERRAFORM_BUCKET_ACCOUNT} --key-file=./credentials/auth_bucket_ci.json --project=${TERRAFORM_GCP_BUCKET_PROJECT_ID}
+            gsutil cp terraform.tfstate gs://${TERRAFORM_BUCKET_PATH_PROD}
+        fi 
+    fi
+    if [ $AMBIENTE == 'release' ]; then
+        if [ $QA_TERRAFORM_DELETE_INFRAESTRUCTURA == '1' ]; then
+            echo "INFO: Proceso de Eliminacion Infraestructura QA ..."
+            echo "INFO: Eliminacion de Infraestructura ..."
+        fi 
+        if [ $QA_TERRAFORM_DELETE_INFRAESTRUCTURA == '0' ]; then
+            echo "INFO: Respaldando archivos terraform.tfstate y terraform.tfstate.backup en Bucket Terraform-qa "
+            echo "INFO: ************************************ "
+            echo "INFO: ${TERRAFORM_BUCKET_PATH_QA}" 
+            echo "INFO: ${TERRAFORM_BUCKET_PATH_QA}"             
+            gcloud auth activate-service-account ${TERRAFORM_BUCKET_ACCOUNT} --key-file=./credentials/auth_bucket_ci.json --project=${TERRAFORM_GCP_BUCKET_PROJECT_ID}
+            gsutil cp terraform.tfstate gs://${TERRAFORM_BUCKET_PATH_QA}
+        fi 
+    fi
+    if [ $AMBIENTE == 'develop' ]; then
+        if [ $DEV_TERRAFORM_DELETE_INFRAESTRUCTURA == '1' ]; then
+            echo "INFO: Proceso de Eliminacion Infraestructura DESARROLLO ..."
+            echo "INFO: Fin de eliminacion de Infraestructura ..."
+        fi 
+        if [ $DEV_TERRAFORM_DELETE_INFRAESTRUCTURA == '0' ]; then
+            echo "INFO: Respaldando archivos terraform.tfstate y terraform.tfstate.backup en Bucket Terraform-desarollo "
+            echo "INFO: ************************************ "
+            echo "INFO: ${TERRAFORM_BUCKET_PATH_DEV}" 
+            echo "INFO: ${TERRAFORM_BUCKET_PATH_DEV}"   
+            gcloud auth activate-service-account ${TERRAFORM_BUCKET_ACCOUNT} --key-file=./credentials/auth_bucket_ci.json --project=${TERRAFORM_GCP_BUCKET_PROJECT_ID}
+            gsutil cp terraform.tfstate gs://${TERRAFORM_BUCKET_PATH_DEV}
+        fi 
+    fi
+  }
+
+  function validation-terraform(){
+    if [ $AMBIENTE == 'master' ]; then
+        echo "INFO: Ejecutando validación archivos terrafom"
+        export TF_VAR_project_id=${PROD_GCP_PROJECT_ID}
+        export TF_VAR_bucket_terraform=${TERRAFORM_BUCKET_PATH_PROD}
+        export TF_VAR_credentials_file=./credentials/auth_proyect_gcp.json
+        terraform -v
+        terraform init
+        terraform validate 
+    fi
+    if [ $AMBIENTE == 'release' ]; then
+        echo "INFO: Ejecutando validación archivos terrafom"
+        export TF_VAR_project_id=${QA_GCP_PROJECT_ID}
+        export TF_VAR_bucket_terraform=${TERRAFORM_BUCKET_PATH_QA}
+        export TF_VAR_credentials_file=./credentials/auth_proyect_gcp.json
+        terraform -v
+        terraform init
+        terraform validate
+    fi
+    if [ $AMBIENTE == 'develop' ]; then
+        echo "INFO: Ejecutando validación archivos terrafom"
+        export TF_VAR_project_id=${DEV_GCP_PROJECT_ID}
+        export TF_VAR_bucket_name_gcs="terraform_gcp"
+        export TF_VAR_bucket_terraform=${TERRAFORM_BUCKET_PATH_DEV}
+        export TF_VAR_credentials_file=./credentials/proyecto-capasitacion-6a9ec613bb66.json
+        terraform -v
+        terraform init 
+        terraform validate
+    fi
+  }
+  
+  function plan-terraform(){
+      echo "INFO: Ejecutando validación archivos terrafom"
+      terraform plan 
+  }
+
+  function graph-terraform(){
+    if [ $AMBIENTE == 'master' ]; then
+        echo "INFO: Esquema "
+        export TF_VAR_project_id=${PROD_GCP_PROJECT_ID}
+        export TF_VAR_credentials_file=./credentials/auth_proyect_gcp.json
+        terraform -v
+        terraform init
+        terraform graph | dot -Tsvg > graph-$CI_PIPELINE_IID.svg
+    fi
+    if [ $AMBIENTE == 'release' ]; then
+        echo "INFO: Esquema "
+        export TF_VAR_project_id=${QA_GCP_PROJECT_ID}
+        export TF_VAR_credentials_file=./credentials/auth_proyect_gcp.json
+        terraform -v
+        terraform init
+        terraform graph | dot -Tsvg > graph-$CI_PIPELINE_IID.svg
+    fi
+    if [ $AMBIENTE == 'develop' ]; then
+        echo "INFO: Esquema $TERRAFORM_BUCKET_PATH_PROD"
+        export TF_VAR_project_id=proyecto-capasitacion
+        export TF_VAR_credentials_file=./credentials/auth_proyect_gcp.json
+        terraform -v
+        terraform init
+        terraform graph | dot -Tsvg > graph-$CI_PIPELINE_IID.svg           
+    fi
+  }
+
+  function get-credentials-gcp(){
+    if [ $AMBIENTE == 'master' ]; then
+        echo "INFO: Descarga de credenciales GCP  "
+        echo ${TERRAFORM_CREDENTIAL_PROJECT_PORD} | base64 -d > ./credentials/auth_proyect_gcp.json
+        echo ${TERRAFORM_BUCKET_CREDENTIAL} | base64 -d > ./credentials/auth_bucket_ci.json
+    fi
+    if [ $AMBIENTE == 'release' ]; then
+        echo "INFO: Descarga de credenciales GCP  "
+        echo ${TERRAFORM_CREDENTIAL_PROJECT_QA} | base64 -d > ./credentials/auth_proyect_gcp.json
+        echo ${TERRAFORM_BUCKET_CREDENTIAL} | base64 -d > ./credentials/auth_bucket_ci.json
+    fi
+    if [ $AMBIENTE == 'develop' ]; then
+        echo "INFO: Descarga de credenciales GCP  "
+        echo ${TERRAFORM_CREDENTIAL_PROJECT_DEV} | base64 -d > ./credentials/auth_proyect_gcp.json
+        echo ${TERRAFORM_BUCKET_CREDENTIAL} | base64 -d > ./credentials/auth_bucket_ci.json
+    fi
+  }
+
+  function save-certifications(){ 
+    if [ $AMBIENTE == 'master' ]; then 
+        echo "INFO: Respaldo de Credenciales Json Ambiente $AMBIENTE"
+        gcloud auth activate-service-account ${TERRAFORM_BUCKET_ACCOUNT} --key-file=./credentials/auth_bucket_ci.json --project=${TERRAFORM_GCP_BUCKET_PROJECT_ID}
+        gsutil cp ./credentials/*.json gs://${PROD_SAVE_CREDENTIALS_GCP}
+    fi 
+    if [ $AMBIENTE == 'release' ]; then
+        echo "INFO: Respaldo de Credenciales Json Ambiente $AMBIENTE"
+        gcloud auth activate-service-account ${TERRAFORM_BUCKET_ACCOUNT} --key-file=./credentials/auth_bucket_ci.json --project=${TERRAFORM_GCP_BUCKET_PROJECT_ID}
+        gsutil cp ./credentials/*.json gs://${QA_SAVE_CREDENTIALS_GCP}
+    fi 
+    if [ $AMBIENTE == 'develop' ]; then
+        echo "INFO: Respaldo de Credenciales Json Ambiente $AMBIENTE"
+        gcloud auth activate-service-account ${TERRAFORM_BUCKET_ACCOUNT} --key-file=./credentials/auth_bucket_ci.json --project=${TERRAFORM_GCP_BUCKET_PROJECT_ID}
+        gsutil cp ./credentials/*.json gs://${DEV_SAVE_CREDENTIALS_GCP}
+    fi
+  }
+before_script:
+  - *script_exec
